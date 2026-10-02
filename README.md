@@ -1,239 +1,165 @@
-# Soroban Smart Contracts — Stellargent
+# Stellargent - Decentralized AI Prompt Marketplace on Stellar
 
-[![Smart Contracts CI](https://github.com/StellarXagent/StellarXagent-contracts-v2/actions/workflows/smart-contracts-ci.yml/badge.svg)](https://github.com/StellarXagent/StellarXagent-contracts-v2/actions/workflows/smart-contracts-ci.yml)
+[![Rust](https://img.shields.io/badge/Rust-1.78%2B-orange.svg)](https://www.rust-lang.org/)
+[![Soroban](https://img.shields.io/badge/Soroban-v25.3.0-blue.svg)](https://soroban.stellar.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/StellarXagent/StellarXagent-contracts-v2/actions/workflows/smart-contracts-ci.yml/badge.svg)](https://github.com/StellarXagent/StellarXagent-contracts-v2/actions)
 
-Two interconnected Soroban smart contracts deployed on **Testnet**:
+Stellargent is a decentralized smart contract system designed to power a secure, tokenized marketplace for AI prompts on the Stellar blockchain using Soroban and Rust. The project enables creators and users to exchange high-value AI prompts while maintaining control over digital assets, privacy, and economic models. Built specifically for AI researchers, prompt engineers, and users transitioning to web3-based digital asset economies.
 
-- **MyToken** (`my-token`): SEP-0041 fungible token with owner-governed minting, burning via sell, and pausable functionality.
-- **PromptMarketplace** (`prompt-marketplace`): A marketplace where admins register prompts, users purchase them (burning tokens), and admins can re-mint.
-
----
-
-## Deployments on Testnet
-
-| Contract | ID | Wasm Hash | Size |
-|---|---|---|---|
-| **MyToken** | `CCHAUOEVX6TQD56VFZY2GI3N3HNF5W6QSRRKAGKDXV6S53T4BKD5PYQD` | `6613593d...` | 9.7 KB |
-| **PromptMarketplace** | `CA6RRLV4IBLKRRLPUDCVXZFDKRE77YHBNJFSXEFFLXV6EUAVVVS6HJUQ` | `f31af684...` | 5.6 KB |
-
-> ⚠️ **These instances predate the `set_marketplace` architecture.** They still expose `mint_forwarded` / `sell_forwarded` without a trusted caller. Do not use them to measure economics or as a reference for the current auth model. The token and marketplace must be re-deployed and bound using `set_marketplace` exactly once.
-
-**Current Architecture**: The marketplace stores the token ID in its `__constructor`. The token stores a single Wasm marketplace address via `set_marketplace`, executable only once by the owner; a standard account (`G...`) or the token itself will be rejected. `buy_prompt` and `buy_private_prompt` call `my_token::sell_forwarded` via `env.invoke_contract`; `remint` calls `my_token::mint_forwarded`. Before each sub-invocation, the marketplace calls `authorize_as_current_contract`, and the token rejects any caller that is not the bound marketplace.
+The platform provides a comprehensive solution for modern AI prompt tokenization, combining the security benefits of blockchain technology with practical marketplace workflows. It features a custom SEP-0041 compliant fungible token tightly integrated with a prompt storefront.
 
 ---
 
-## Tests
+## Table of Contents
 
-### Unit tests (58)
-
-```bash
-# All tests (58)
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test --workspace --target aarch64-apple-darwin
-
-# Per package
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p my-token --target aarch64-apple-darwin
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p prompt-marketplace --target aarch64-apple-darwin
-```
-
-> On Linux/CI, use `--target x86_64-unknown-linux-gnu`, and on Windows, use `--target x86_64-pc-windows-msvc`, instead of `aarch64-apple-darwin`. The default workspace target (`.cargo/config.toml`) is `wasm32v1-none`, which does not support `cargo test` — you must always explicitly pass `--target` to run tests.
-
-### Cross-contract authorization in Soroban v25
-
-Soroban v25's mock auth cannot satisfy a SECOND `require_auth()` for the SAME address within a single invocation tree. If the root invocation calls `buyer.require_auth()` and then a sub-invocation (marketplace → token via `invoke_contract`) also calls `require_auth()` for `buyer`, the host rejects it with `Error(Auth, ExistingValue)`. Mock auth cannot represent "this address already authorized higher up in the tree".
-
-**Mitigation adopted in this code:** `sell_forwarded` and `mint_forwarded` (`contracts/tokens/src/contract.rs`) only mutate balances if the Wasm marketplace bound via `set_marketplace` authorizes the call. The marketplace handles this authorization with `authorize_as_current_contract` right before invoking the token. A direct external call, a call without a configured marketplace, a call from a different marketplace, or a binding to an account (`G...`) will fail before altering the balance or supply.
-
-`scripts/integration-test.sh` exercises the entire end-to-end flow against a real testnet using genuine signatures (Soroban CLI). This is the only place where a genuine nested `require_auth()` (if re-introduced by mistake) would be caught.
-
-### Integration test (Testnet)
-
-Tests the complete flow against a real testnet: mint → register → buy (cross-contract) → verify → remint → verify.
-
-```bash
-# Requires freshly deployed and bound contracts. The Testnet IDs in the table above DO NOT work for this, as they do not implement get_marketplace.
-TOKEN="<MY_TOKEN_ID>" \
-MKT="<MARKETPLACE_ID>" \
-bash scripts/integration-test.sh
-```
-
-### Token: 21 tests
-
-| Test | Coverage |
-|---|---|
-| `test_token_mint_and_balance` | Mint via storage API + balance + total_supply |
-| `test_token_metadata` | name, symbol, decimals |
-| `test_mint_multiple_same_user` | Cumulative mint to the same address |
-| `test_mint_to_different_users` | Mint to multiple users, supply tracking |
-| `test_mint_overflow_panics` | i128::MAX + 1 must panic |
-| `test_zero_balance_default` | Default balance is 0 |
-| `test_set_marketplace_stores_address` | Owner configures the trusted marketplace |
-| `test_get_marketplace_fails_before_binding` | Reading marketplace fails if not yet configured |
-| `test_set_marketplace_requires_owner` | Non-owner cannot configure the marketplace |
-| `test_set_marketplace_cannot_retarget` | The marketplace cannot be silently retargeted |
-| `test_set_marketplace_rejects_account_address` | An account (`G...`) cannot be the marketplace |
-| `test_set_marketplace_rejects_token_self` | The token cannot be bound to itself |
-| `test_sell_forwarded_fails_without_marketplace_binding` | Burn forwarded fails if no marketplace is configured |
-| `test_sell_forwarded_fails_from_direct_external_call` | Direct external call cannot burn tokens |
-| `test_sell_forwarded_rejects_holder_auth_without_marketplace_caller` | Holder auth does not substitute the marketplace caller |
-| `test_sell_forwarded_updates_balance` | Happy path: marketplace auth burns tokens and emits `SellEvent` |
-| `test_mint_forwarded_fails_without_marketplace_binding` | Mint forwarded fails if no marketplace is configured |
-| `test_mint_forwarded_fails_from_direct_external_call` | Direct external call cannot mint tokens |
-| `test_mint_forwarded_rejects_owner_auth_without_marketplace_caller` | Owner auth does not substitute the marketplace caller |
-| `test_mint_forwarded_updates_balance` | Happy path: marketplace auth mints tokens and emits `MintEvent` |
-| `test_mint_forwarded_rejects_non_positive_amount` | Amount 0 panics in the forwarded path |
-
-### Marketplace: 36 tests
-
-| Test | Coverage |
-|---|---|
-| `test_register_and_query_prompt` | Happy path: register → get_price / get_owner |
-| `test_duplicate_registration_panics` | Same ID cannot be registered twice |
-| `test_update_price` | Admin changes price |
-| `test_remove_prompt` | Admin removes prompt (idempotent) |
-| `test_multiple_prompts_independent` | Distinct prompts do not interfere |
-| `test_get_price_unregistered_panics` | Query price of non-existent prompt |
-| `test_non_admin_cannot_register` | Non-admin cannot register |
-| `test_non_admin_cannot_update_price` | Non-admin cannot change price |
-| `test_non_admin_cannot_remove` | Non-admin cannot remove |
-| `test_register_zero_price_panics` | Price 0 is invalid |
-| `test_update_price_zero_panics` | Updating to price 0 is invalid |
-| `test_register_max_price` | i128::MAX works as price |
-| `test_update_unregistered_prompt_panics` | Update price of non-existent prompt |
-| `test_register_after_remove` | Re-register same ID post-removal |
-| `test_has_access_unregistered` | has_access without purchase returns false |
-| `test_token_mint_and_balance` | Mint via storage in token context |
-| `test_buy_prompt_cross_contract` | E2E: register → buy_prompt (real cross-contract) → burned balance |
-| `test_has_access_after_buy` | has_access is false before buying and true after `buy_prompt` |
-| `test_buy_prompt_emits_event` | `buy_prompt` emits `PromptPurchased` with correct buyer/prompt_id/price |
-| `test_remint_cross_contract` | E2E: `remint` (real cross-contract) → minted balance |
-| `test_remint_emits_event` | `remint` emits `TokensReminted` with correct admin/to/amount |
-| `test_unbound_marketplace_cannot_burn_forwarded_tokens` | An unbound marketplace cannot burn balances |
-| `test_unbound_marketplace_cannot_mint_forwarded_tokens` | An unbound marketplace cannot mint balances |
+- [Project Overview](#-project-overview)
+- [Setup Instructions](#-setup-instructions)
+  - [Prerequisites](#-prerequisites)
+  - [Quick Start](#-quick-start)
+  - [Environment Setup](#-environment-setup)
+  - [Running Tests](#-running-tests)
+  - [Network Configuration](#-network-configuration)
+- [Features](#-features)
+- [Micro-Contract Architecture](#-micro-contract-architecture)
+- [Project Structure](#-project-structure)
+- [Usage Examples](#-usage-examples)
+- [Deployment](#-deployment)
+- [CI/CD Pipeline](#-cicd-pipeline)
+- [Helpful Links](#-helpful-links)
+- [Contribution Guidelines](#-contribution-guidelines)
+- [License](#-license)
+- [Support](#-support)
 
 ---
 
-## Build WASM
+## Project Overview
 
-```bash
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 stellar contract build --package my-token
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 stellar contract build --package prompt-marketplace
-```
+Stellargent transforms the AI prompt economy by leveraging Stellar's blockchain infrastructure to create an immutable, secure, and creator-centric ecosystem. The system addresses critical digital asset challenges including payment settlement, ownership tracking, and privacy through cryptographic security.
 
-Requires the `wasm32v1-none` target and the `SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1` environment variable for Spec Shaking v2. Alternatively, for mainnet, use `cargo build --target wasm32v1-none --release`.
+### Key Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Cross-Contract Security** | Strict authorization bounding between Marketplace and Token contracts |
+| **Creator Control** | Admins and creators govern prompt pricing and token supply |
+| **Interoperability** | Built on SEP-0041 standard for seamless ecosystem integration |
+| **Privacy Exploration** | Experimental off-chain SHA-256 hash architecture for private access |
+| **AI-Specific** | Tailored specifically for prompt engineers and AI asset trading |
+
+### Target Users
+
+- Prompt engineers and AI researchers
+- Digital asset marketplaces and platforms
+- Users seeking privacy-preserving access to premium AI models
+- Web3 developers building on Stellar
 
 ---
 
-## Deploy
-
-```bash
-# Token
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/my_token.wasm \
-  --source default \
-  --network testnet \
-  --alias my_token \
-  -- \
-  --owner "$(stellar keys address default)" \
-  --name "PromptToken" \
-  --symbol "PRMPT" \
-  --decimals 7
-
-# Marketplace (use the ID of the newly deployed token)
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/prompt_marketplace.wasm \
-  --source default \
-  --network testnet \
-  --alias prompt_marketplace \
-  -- \
-  --admin "$(stellar keys address default)" \
-  --token "$TOKEN_ID"
-
-# Bind token -> marketplace once (use real deployment IDs, not the table ones)
-stellar contract invoke \
-  --id "$TOKEN_ID" \
-  --source default \
-  --network testnet \
-  --send=yes \
-  -- \
-  set_marketplace \
-  --marketplace "$MARKETPLACE_ID"
-```
-
-## Deploy on Mainnet
-
-> ⚠️ **SECURITY WARNING — READ BEFORE EXECUTING**
->
-> Mainnet involves real value and irreversible transactions. Before deploying:
->
-> 1. **Do not hardcode or `source` private keys.** Use a secrets manager (1Password CLI, AWS Secrets Manager, HashiCorp Vault, GitHub encrypted secrets, etc.) to inject `MAINNET_DEPLOYER_SOURCE` and `MAINNET_ADMIN_SOURCE` at runtime.
-> 2. **Verify the code and WASM before deploying.** Recompile from a trusted source, calculate the SHA-256 hash, and compare it with the artifact you are about to upload.
-> 3. **Prefer multisig accounts or hardware wallets** for the admin account (`MAINNET_ADMIN_ADDR`). The deployer and admin can be different accounts.
-> 4. **Check constructor parameters.** An error in `owner`/`admin` or in the marketplace's `token` can leave the contracts uncontrollable.
-> 5. **Have sufficient XLM** in the deployer account to cover rent/storage for both contracts on mainnet.
+## Setup Instructions
 
 ### Prerequisites
 
-- Stellar CLI configured for mainnet.
-- Access to a mainnet RPC endpoint.
-- Account with real XLM to pay for fees and rent.
-- Separate admin account (recommended) with secure key pairs.
-- Build target installed: `rustup target add wasm32v1-none`.
-- Environment variable for Spec Shaking V2: `export SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1`
+Before you begin, ensure you have the following installed:
 
-### Mainnet Scripts
+- **Rust 1.78.0+** - [Install Rust](https://www.rust-lang.org/tools/install)
+- **Soroban CLI v26.1.0+** - [Install Soroban](https://soroban.stellar.org/docs/getting-started/installation)
+- **Git** - For version control
+- **Make** - For using the provided Makefile
 
-#### `scripts/deploy-mainnet.sh`
+### Quick Start
 
-Builds release, calculates hashes, deploys, initializes, and validates both contracts. Emits a JSON summary in `deploy-artifacts/`.
+Get up and running in under 5 minutes:
 
 ```bash
-MAINNET_DEPLOYER_SOURCE="deployer" \
-MAINNET_ADMIN_SOURCE="admin" \
-MAINNET_ADMIN_ADDR="G..." \
-bash scripts/deploy-mainnet.sh
+# Clone the repository
+git clone https://github.com/StellarXagent/StellarXagent-contracts-v2.git
+cd Smart-contracts
+
+# Or use the Makefile for step-by-step setup
+make setup
 ```
 
-#### `scripts/verify-mainnet.sh`
+### Environment Setup
 
-Verifies a pair of already deployed contracts without re-deploying. Useful for CI or periodic validations.
+#### Manual Setup
 
 ```bash
-MAINNET_TOKEN_ID="C..." \
-MAINNET_MARKETPLACE_ID="C..." \
-MAINNET_ADMIN_ADDR="G..." \
-bash scripts/verify-mainnet.sh
+# Install Rust targets and components
+rustup target add wasm32v1-none
+rustup component add rustfmt clippy rust-src
+
+# Export Spec Shaking flag required for v25+
+export SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1
+
+# Configure Soroban for Testnet
+soroban config network add testnet \
+    --rpc-url https://soroban-testnet.stellar.org:443 \
+    --network-passphrase "Test SDF Network ; September 2015"
+
+# Build the project
+cargo build --target wasm32v1-none --release
 ```
 
-### Mainnet Release Gate & Security
+### Running Tests
 
-Before executing `deploy-mainnet.sh` with real funds, this release is subject to security checks defined in our internal documentation:
-- [`docs/security/MAINNET_RELEASE_CHECKLIST.md`](docs/security/MAINNET_RELEASE_CHECKLIST.md) - Master checklist for deployment.
-- [`docs/security/MAINNET_CUSTODY_POLICY.md`](docs/security/MAINNET_CUSTODY_POLICY.md) - Deployer/admin custody policy.
-- [`docs/security/AUDIT_PROCESS.md`](docs/security/AUDIT_PROCESS.md) - Independent security review process.
-- [`docs/operations/MONITORING_AND_INCIDENT_RESPONSE.md`](docs/operations/MONITORING_AND_INCIDENT_RESPONSE.md) - Monitoring and rollback runbook.
-
-### Invocation Examples
-
-*(Old Testnet instances — useful only for metadata reading, not for the current purchasing flow)*
+Ensure everything is working correctly across the workspace (58 tests in total):
 
 ```bash
-# Read token name
-stellar contract invoke --source default --network testnet \
-  --id CCHAUOEVX6TQD56VFZY2GI3N3HNF5W6QSRRKAGKDXV6S53T4BKD5PYQD \
-  -- name
+# Run all tests (macOS/Linux examples)
+SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test --workspace --target aarch64-apple-darwin
 
-# Register prompt
-stellar contract invoke --source default --network testnet \
-  --id CA6RRLV4IBLKRRLPUDCVXZFDKRE77YHBNJFSXEFFLXV6EUAVVVS6HJUQ \
-  --send=yes \
-  -- register_prompt --prompt_id "alpha" --price 500 \
-  --owner "$(stellar keys address default)"
-
-# Query price
-stellar contract invoke --source default --network testnet \
-  --id CA6RRLV4IBLKRRLPUDCVXZFDKRE77YHBNJFSXEFFLXV6EUAVVVS6HJUQ \
-  -- get_price --prompt_id "alpha"
+# Run specific package tests
+SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p my-token --target aarch64-apple-darwin
+SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p prompt-marketplace --target aarch64-apple-darwin
 ```
+> **Note:** The default workspace target (`.cargo/config.toml`) is `wasm32v1-none`, which does not support `cargo test`. You must explicitly pass a native target (e.g., `x86_64-unknown-linux-gnu` or `aarch64-apple-darwin`).
+
+### Network Configuration
+
+The project supports multiple Stellar networks:
+
+```bash
+# Set up a deployer identity
+soroban config identity generate deployer
+
+# Fund the account on Testnet (use Stellar Laboratory)
+```
+
+---
+
+## Features
+
+- **MyToken (SEP-0041):** Fungible token with owner-governed minting, burning via sell, and pausable functionality.
+- **PromptMarketplace:** Storefront where admins register prompts and users purchase them (burning tokens).
+- **Private Access Prototype:** Uses off-chain SHA-256 hashes instead of plaintext IDs to hide prompt ownership on the public ledger.
+- **Secure Cross-Contract Auth:** Specialized `set_marketplace` binding ensures the token only alters balances when authorized by the exact connected marketplace.
+- **Mainnet Ready:** Full deployment scripts with multi-sig and hardware wallet considerations.
+
+---
+
+## Micro-Contract Architecture
+
+The following diagram details the dependency graph and cross-contract call flow between the core components:
+
+```mermaid
+graph TD
+    subgraph StellargentArch ["Stellargent Micro-Contract Architecture & Call Flow"]
+        MKT["<b>PromptMarketplace Contract</b><br/>(Prompt Registry & Storefront)"]
+        TOK["<b>MyToken Contract</b><br/>(SEP-0041 Token & Balances)"]
+        PRIV["<b>Private Access Prototype</b><br/>(Zero-Knowledge/Opaque Access Hash)"]
+    end
+
+    MKT -->|authorize_as_current_contract & sell_forwarded| TOK
+    MKT -->|authorize_as_current_contract & mint_forwarded| TOK
+    PRIV -->|Simulated Token Deductions| TOK
+
+    style MKT fill:#2b3a4a,stroke:#4a90e2,stroke-width:2px,color:#fff
+    style TOK fill:#2b3a4a,stroke:#50e3c2,stroke-width:2px,color:#fff
+    style PRIV fill:#2b3a4a,stroke:#bd10e0,stroke-width:2px,color:#fff
+```
+
+*Note on Soroban v25 Auth:* Soroban v25's mock auth cannot satisfy a second `require_auth()` for the same address within a single invocation tree. Therefore, `sell_forwarded` and `mint_forwarded` strictly rely on the marketplace Wasm authorization (`authorize_as_current_contract`), rejecting any direct account external calls to those endpoints.
 
 ---
 
@@ -265,9 +191,126 @@ Cargo.toml                       # workspace: tokens + marketplace
 
 ---
 
-## Stack
+## Usage Examples
 
-- **Soroban SDK**: `25.3.0`
-- **OZ Stellar Contracts**: `v0.7.1` (fungible token, ownable, pausable)
-- **Stellar CLI**: `26.1.0`
-- **Target**: `wasm32v1-none` (release), `aarch64-apple-darwin` (tests)
+### Basic Contract Interaction
+
+```bash
+# Read token name
+stellar contract invoke --source default --network testnet \
+  --id <TOKEN_ID> \
+  -- name
+
+# Register prompt
+stellar contract invoke --source default --network testnet \
+  --id <MARKETPLACE_ID> \
+  --send=yes \
+  -- register_prompt --prompt_id "alpha" --price 500 \
+  --owner "$(stellar keys address default)"
+
+# Query price
+stellar contract invoke --source default --network testnet \
+  --id <MARKETPLACE_ID> \
+  -- get_price --prompt_id "alpha"
+```
+
+---
+
+## Deployment
+
+### Local Development / Testnet
+
+```bash
+# 1. Deploy Token
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/my_token.wasm \
+  --source default --network testnet --alias my_token \
+  -- --owner "$(stellar keys address default)" --name "PromptToken" --symbol "PRMPT" --decimals 7
+
+# 2. Deploy Marketplace
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/prompt_marketplace.wasm \
+  --source default --network testnet --alias prompt_marketplace \
+  -- --admin "$(stellar keys address default)" --token "$TOKEN_ID"
+
+# 3. Bind token -> marketplace (Required for cross-contract auth)
+stellar contract invoke \
+  --id "$TOKEN_ID" --source default --network testnet --send=yes \
+  -- set_marketplace --marketplace "$MARKETPLACE_ID"
+```
+
+### Production Mainnet Deployment
+
+> ⚠️ **SECURITY WARNING:** Do not hardcode private keys. Use a secrets manager. Prefer multisig accounts or hardware wallets for the admin account.
+
+```bash
+# Build release, calculate hashes, deploy, initialize, and validate both contracts
+MAINNET_DEPLOYER_SOURCE="deployer" \
+MAINNET_ADMIN_SOURCE="admin" \
+MAINNET_ADMIN_ADDR="G..." \
+bash scripts/deploy-mainnet.sh
+```
+
+---
+
+## CI/CD Pipeline
+
+### Scripts & Workflows
+
+| Script | Purpose |
+|----------|---------|
+| `scripts/deploy-mainnet.sh` | Mainnet deploy with Hash verification and JSON output |
+| `scripts/verify-mainnet.sh` | Verify live contracts against local artifacts without re-deploying |
+| `scripts/integration-test.sh` | Full E2E Testnet flow with Soroban CLI |
+
+---
+
+## Helpful Links
+
+### Documentation
+
+- [Threat Model & Privacy](docs/adr/0001-private-access-threat-model.md)
+- [Market V1 Settlement](docs/adr/0002-market-v1-settlement-and-creator-payout.md)
+- [Mainnet Custody Policy](docs/security/MAINNET_CUSTODY_POLICY.md)
+- [Audit Process](docs/security/AUDIT_PROCESS.md)
+- [Incident Response](docs/operations/MONITORING_AND_INCIDENT_RESPONSE.md)
+
+### External Resources
+
+- [Stellar Developer Docs](https://developers.stellar.org/)
+- [Soroban Documentation](https://soroban.stellar.org/docs)
+- [Rust Documentation](https://doc.rust-lang.org/)
+
+---
+
+## Contribution Guidelines
+
+We welcome contributions! Please follow these guidelines:
+
+1. **Fork** the repository
+2. **Clone** your fork locally
+3. **Create** a feature branch: `git checkout -b feature/your-feature`
+4. **Make** your changes
+5. **Test** your changes using the workspace testing instructions
+6. **Commit** with a descriptive message
+7. **Push** to your fork
+8. **Submit** a Pull Request
+
+---
+
+## License
+
+This project is licensed under the MIT License.
+
+---
+
+## Support
+
+- **Issues**: [GitHub Issues](https://github.com/StellarXagent/StellarXagent-contracts-v2/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/StellarXagent/StellarXagent-contracts-v2/discussions)
+
+---
+
+<p align="center">
+  Built with Soroban on Stellar
+</p>
