@@ -13,7 +13,8 @@ target
 .env.*
 *.log
 
-vscode/
+.vscode/
+.agents/
 .idea/
 *.iml
 .DS_Store
@@ -24,3 +25,4 @@ test_snapshots/
 .atl/
 .engram/
 openspec/
+

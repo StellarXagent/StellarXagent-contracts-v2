@@ -76,8 +76,9 @@ Get up and running in under 5 minutes:
 git clone https://github.com/StellarXagent/StellarXagent-contracts-v2.git
 cd Smart-contracts
 
-# Or use the Makefile for step-by-step setup
+# Install the Rust targets/components and build
 make setup
+make test
 ```
 
 ### Environment Setup
@@ -103,15 +104,15 @@ cargo build --target wasm32v1-none --release
 
 ### Running Tests
 
-Ensure everything is working correctly across the workspace (58 tests in total):
+Ensure everything is working correctly across the workspace (58 tests in total: 21 token, 36 marketplace, 1 prototype):
 
 ```bash
-# Run all tests (macOS/Linux examples)
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test --workspace --target aarch64-apple-darwin
+# Run all tests (Linux x86_64; use aarch64-apple-darwin on Apple Silicon)
+make test
 
 # Run specific package tests
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p my-token --target aarch64-apple-darwin
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p prompt-marketplace --target aarch64-apple-darwin
+SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p my-token --target x86_64-unknown-linux-gnu
+SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo test -p prompt-marketplace --target x86_64-unknown-linux-gnu
 ```
 > **Note:** The default workspace target (`.cargo/config.toml`) is `wasm32v1-none`, which does not support `cargo test`. You must explicitly pass a native target (e.g., `x86_64-unknown-linux-gnu` or `aarch64-apple-darwin`).
 
@@ -167,6 +168,8 @@ graph TD
 
 ```
 contracts/
+├── private_access_prototype/    # Experimental opaque-hash access contract
+│   └── src/ (lib.rs, tests.rs)  # 1 test
 ├── tokens/                      # MyToken (fungible token)
 │   ├── Cargo.toml
 │   └── src/
@@ -262,6 +265,10 @@ bash scripts/deploy-mainnet.sh
 | `scripts/deploy-mainnet.sh` | Mainnet deploy with Hash verification and JSON output |
 | `scripts/verify-mainnet.sh` | Verify live contracts against local artifacts without re-deploying |
 | `scripts/integration-test.sh` | Full E2E Testnet flow with Soroban CLI |
+| `scripts/testnet-dry-run.sh` | Fresh Testnet dry run for the Mainnet release gate |
+| `scripts/canary-mainnet.sh` | Capped, real-value Mainnet canary purchase |
+
+CI is defined in `.github/workflows/smart-contracts-ci.yml`.
 
 ---
 
