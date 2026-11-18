@@ -7,10 +7,6 @@ HOST_TARGET ?= x86_64-unknown-linux-gnu
 
 default: build
 
-setup:
-	rustup target add wasm32v1-none
-	rustup component add rustfmt clippy rust-src
-
 all: test
 
 test: build
